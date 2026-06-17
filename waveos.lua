@@ -1,6 +1,14 @@
 local W,H=term.getSize()
 local NATIVE_TERM=term.current()
 local REAL_REQUIRE=require
+local SCREEN_BUF=window.create(NATIVE_TERM,1,1,W,H,false)
+local function withBuffer(drawFn)
+  SCREEN_BUF.setVisible(false)
+  local prev=term.redirect(SCREEN_BUF)
+  drawFn()
+  term.redirect(prev)
+  SCREEN_BUF.setVisible(true)
+end
 local S={
   screen="boot",accounts={},user="",pw="",theme=colors.blue,bg=1,
   setup=false,apps={},notifs={},windows={},nextId=1,volume=70,
@@ -155,11 +163,7 @@ local function drawBackground()
     local sx,sy=W-6,2
     box(sx,sy,sx+2,sy+2,colors.yellow)
   end
-  wp(2,1,"WaveOS",colors.white,S.bg==1 and colors.cyan or (S.bg==3 and colors.lightBlue or colors.lightBlue))
 end
-
-local TASKBAR_H=3
-local function taskbarY() return H-TASKBAR_H+1 end
 
 local function drawDesktopIcons()
   local cellW,cellH=7,4
@@ -180,7 +184,8 @@ local function drawDesktopIcons()
   end
 end
 
-
+local TASKBAR_H=3
+local function taskbarY() return H-TASKBAR_H+1 end
 
 local function drawMenuIcon(x,y)
   for i=0,2 do hline(x,x+4,y+i,colors.white) end
@@ -390,27 +395,61 @@ end
 
 local SPIN={"\183","\184","\185","\186"}
 
-local function drawBoot()
-  box(1,1,W,H,colors.black)
-  local cy=math.floor(H/2)-1
-  wp(math.floor((W-6)/2),cy,"WaveOS",colors.lightBlue,colors.black)
-  local bw=math.floor(W*0.5) local bx=math.floor((W-bw)/2)
-  box(bx,cy+2,bx+bw-1,cy+2,colors.gray)
-  for i=1,bw do
-    box(bx,cy+2,bx+i-1,cy+2,colors.lightBlue)
-    if i%4==0 then sleep(0.03) end
+local SPIN_POS={}
+for i=0,7 do
+  local a=i*math.pi/4
+  table.insert(SPIN_POS,{math.floor(math.cos(a)*4+0.5),math.floor(math.sin(a)*2+0.5)})
+end
+
+local function drawSpinnerFrame(cx,cy,frame)
+  for i,p in ipairs(SPIN_POS) do
+    local dist=(i-1-frame)%8
+    local c=colors.gray
+    if dist==0 then c=colors.white
+    elseif dist==1 then c=colors.lightBlue
+    elseif dist==2 then c=colors.blue
+    end
+    pset(cx+p[1],cy+p[2],c)
   end
-  sleep(0.2)
+end
+
+local function drawBigW(cx,cy)
+  local pts={{0,0},{4,8},{7,2},{10,8},{14,0}}
+  local ox,oy=cx-7,cy-4
+  for i=1,#pts-1 do
+    local x1,y1=ox+pts[i][1],oy+pts[i][2]
+    local x2,y2=ox+pts[i+1][1],oy+pts[i+1][2]
+    paintutils.drawLine(x1,y1,x2,y2,colors.blue)
+    paintutils.drawLine(x1+1,y1,x2+1,y2,colors.blue)
+  end
+end
+
+local function drawBoot()
+  local cx,cy=math.floor(W/2),math.floor(H/2)-3
+  local scy=cy+7
+  withBuffer(function()
+    box(1,1,W,H,colors.black)
+    drawBigW(cx,cy)
+  end)
+  sleep(0.3)
+  for frame=0,11 do
+    withBuffer(function()
+      box(cx-5,scy-2,cx+5,scy+2,colors.black)
+      drawSpinnerFrame(cx,scy,frame%8)
+    end)
+    sleep(0.08)
+  end
 end
 
 local function drawSleep()
-  box(1,1,W,H,colors.black)
-  local msg="Click to wake"
-  wp(math.floor((W-#msg)/2),math.floor(H/2),msg,colors.white,colors.black)
+  withBuffer(function()
+    box(1,1,W,H,colors.black)
+    local msg="Click to wake"
+    wp(math.floor((W-#msg)/2),math.floor(H/2),msg,colors.white,colors.black)
+  end)
 end
 
 local function showBlueScreen(appName,errMsg)
-  box(1,1,W,H,colors.blue)
   local lines={
     ":(",
     "",
@@ -419,14 +458,16 @@ local function showBlueScreen(appName,errMsg)
     "App: "..tostring(appName),
     "Error: "..tostring(errMsg),
     "",
-    "Restarting in 10 seconds...",
   }
   local cy=math.floor(H/2)-#lines
-  for i,l in ipairs(lines) do
-    wp(3,cy+i,l:sub(1,W-4),colors.white,colors.blue)
-  end
   for i=10,1,-1 do
-    wp(3,cy+#lines+2,"Restarting in "..i.." seconds... ",colors.white,colors.blue)
+    withBuffer(function()
+      box(1,1,W,H,colors.blue)
+      for j,l in ipairs(lines) do
+        wp(3,cy+j,l:sub(1,W-4),colors.white,colors.blue)
+      end
+      wp(3,cy+#lines+2,"Restarting in "..i.." seconds... ",colors.white,colors.blue)
+    end)
     sleep(1)
   end
   saveData()
@@ -434,9 +475,9 @@ local function showBlueScreen(appName,errMsg)
 end
 
 local function drawLoginScreen()
+withBuffer(function()
   box(1,1,W,H,colors.blue)
   for y=1,math.floor(H*0.5) do hline(1,W,y,colors.lightBlue) end
-  wp(2,1,"WaveOS",colors.white,colors.lightBlue)
   local cx=math.floor(W/2)
   local cy=math.floor(H*0.25)
   box(cx-2,cy-1,cx+2,cy+1,colors.white)
@@ -475,63 +516,66 @@ local function drawLoginScreen()
     S.switchUserBtn={fx,fx+15,fy+6}
     S.accountNames=names
   end
+end)
 end
 
 local THEME_COLORS={colors.blue,colors.cyan,colors.purple,colors.red,colors.green,colors.orange}
 local BG_NAMES={"Gradient","Sky & Clouds","Sea & Ground"}
 
 local function drawSetup()
-  box(1,1,W,H,colors.white)
-  wp(2,1,"WaveOS",colors.gray,colors.white)
+withBuffer(function()
+  box(1,1,W,H,colors.black)
   local step=S.setupStep or 1
-  box(2,3,W-1,3,colors.lightGray)
-  wp(3,3,"Setup - Step "..step.."/3",colors.black,colors.lightGray)
+  box(2,3,W-1,3,colors.gray)
+  wp(3,3,"Setup - Step "..step.."/3",colors.white,colors.gray)
 
   local cx=4 local cy=6
   if step==1 then
-    wp(cx,cy,"Username",colors.gray,colors.white)
-    box(cx,cy+1,cx+24,cy+1,colors.lightGray)
-    wp(cx+1,cy+1,S.tmpUser or "",colors.black,colors.lightGray)
-    wp(cx,cy+3,"Password",colors.gray,colors.white)
-    box(cx,cy+4,cx+24,cy+4,colors.lightGray)
-    wp(cx+1,cy+4,string.rep("\7",#(S.tmpPw or "")),colors.black,colors.lightGray)
-    wp(cx,cy+6,"Confirm",colors.gray,colors.white)
-    box(cx,cy+7,cx+24,cy+7,colors.lightGray)
-    wp(cx+1,cy+7,string.rep("\7",#(S.tmpPw2 or "")),colors.black,colors.lightGray)
-    if S.setupErr then wp(cx,cy+9,S.setupErr,colors.red,colors.white) end
+    wp(cx,cy,"Username",colors.lightGray,colors.black)
+    box(cx,cy+1,cx+24,cy+1,colors.gray)
+    wp(cx+1,cy+1,S.tmpUser or "",colors.white,colors.gray)
+    wp(cx,cy+3,"Password",colors.lightGray,colors.black)
+    box(cx,cy+4,cx+24,cy+4,colors.gray)
+    wp(cx+1,cy+4,string.rep("\7",#(S.tmpPw or "")),colors.white,colors.gray)
+    wp(cx,cy+6,"Confirm",colors.lightGray,colors.black)
+    box(cx,cy+7,cx+24,cy+7,colors.gray)
+    wp(cx+1,cy+7,string.rep("\7",#(S.tmpPw2 or "")),colors.white,colors.gray)
+    if S.setupErr then wp(cx,cy+9,S.setupErr,colors.red,colors.black) end
     box(W-12,H-2,W-2,H-2,S.theme)
     wp(W-9,H-2,"Next",colors.white,S.theme)
   elseif step==2 then
-    wp(cx,cy,"Theme color",colors.gray,colors.white)
+    wp(cx,cy,"Theme color",colors.lightGray,colors.black)
     for i,c in ipairs(THEME_COLORS) do
       local bx=cx+(i-1)*4
       box(bx,cy+1,bx+2,cy+2,c)
-      if c==S.theme then rect(bx,cy+1,bx+2,cy+2,colors.black) end
+      if c==S.theme then rect(bx,cy+1,bx+2,cy+2,colors.white) end
     end
-    wp(cx,cy+4,"Background style",colors.gray,colors.white)
+    wp(cx,cy+4,"Background style",colors.lightGray,colors.black)
     for i,n in ipairs(BG_NAMES) do
       local by=cy+5+(i-1)*2
-      box(cx,by,cx+2,by,S.bg==i and S.theme or colors.lightGray)
-      wp(cx+4,by,n,colors.black,colors.white)
+      box(cx,by,cx+2,by,S.bg==i and S.theme or colors.gray)
+      wp(cx+4,by,n,colors.white,colors.black)
     end
-    wp(cx,cy+12,"Clock format",colors.gray,colors.white)
-    box(cx,cy+13,cx+6,cy+13,S.clockfmt=="24h" and S.theme or colors.lightGray)
-    wp(cx+1,cy+13,"24h",colors.white,S.clockfmt=="24h" and S.theme or colors.lightGray)
-    box(cx+8,cy+13,cx+14,cy+13,S.clockfmt=="12h" and S.theme or colors.lightGray)
-    wp(cx+9,cy+13,"12h",colors.white,S.clockfmt=="12h" and S.theme or colors.lightGray)
+    wp(cx,cy+12,"Clock format",colors.lightGray,colors.black)
+    box(cx,cy+13,cx+6,cy+13,S.clockfmt=="24h" and S.theme or colors.gray)
+    wp(cx+1,cy+13,"24h",colors.white,S.clockfmt=="24h" and S.theme or colors.gray)
+    box(cx+8,cy+13,cx+14,cy+13,S.clockfmt=="12h" and S.theme or colors.gray)
+    wp(cx+9,cy+13,"12h",colors.white,S.clockfmt=="12h" and S.theme or colors.gray)
     box(W-12,H-2,W-2,H-2,S.theme)
     wp(W-9,H-2,"Next",colors.white,S.theme)
   elseif step==3 then
-    wp(cx,cy,"Setup complete!",colors.black,colors.white)
-    wp(cx,cy+2,"Click Finish to start WaveOS.",colors.gray,colors.white)
+    wp(cx,cy,"Setup complete!",colors.white,colors.black)
+    wp(cx,cy+2,"Click Finish to start WaveOS.",colors.lightGray,colors.black)
     box(W-14,H-2,W-2,H-2,S.theme)
     wp(W-11,H-2,"Finish",colors.white,S.theme)
   end
   S.setupBtn={W-12,W-2,H-2}
   if step==3 then S.setupBtn={W-14,W-2,H-2} end
+end)
 end
 
 redrawDesktop=function()
+withBuffer(function()
   drawBackground()
   drawDesktopIcons()
   drawWindows()
@@ -539,6 +583,7 @@ redrawDesktop=function()
   if S.start then drawStartMenu() end
   if S.volPanel then drawVolumePanel() end
   if S.notifPanel then drawNotifPanel() end
+end)
 end
 
 local function closeMenus()
@@ -596,7 +641,7 @@ end
 
 local function runApp(app)
   local win=createWindow(app.name,app.icon,40,15,nil,nil,nil,nil,nil)
-  win.surface=window.create(term.current(),win.contentArea[1],win.contentArea[2],win.w-1,win.h-1,false)
+  win.surface=window.create(SCREEN_BUF,win.contentArea[1],win.contentArea[2],win.w-1,win.h-1,false)
   win.app=app
   win.isAppHost=true
   win.filter=nil
@@ -900,19 +945,16 @@ local function inRect(x,y,b)
   return b and x>=b[1] and x<=b[2] and y>=b[3] and y<=b[4]
 end
 
-local openEaveChat,openSaveChat
-
 local MAX_WINDOWS=3
 local function launchApp(app)
   if #S.windows>=MAX_WINDOWS then
     notify("WaveOS","Close a window first (max "..MAX_WINDOWS..")")
     return
   end
-  if app.name=="App Manager" then openAppManager()
+  if app.name=="Task Manager" then openTaskManager()
   elseif app.name=="Settings" then openSettings()
   elseif app.name=="Explorer" then openFileExplorer()
-  elseif app.name=="EaveChat" then openEaveChat()
-  elseif app.name=="SaveChat" then openSaveChat()
+  elseif app.name=="Shop" then openShop()
   else runApp(app) end
 end
 
@@ -1225,6 +1267,855 @@ local function handleSetupChar(ch)
   drawSetup()
 end
 
+local SAVECHAT_SRC=[==[
+local PROTO="WAVEOS_CHAT"
+local DATA="/.savechat_data"
+local W,H=term.getSize()
+
+local function bxor(a,b)
+  local r,bit=0,1
+  for i=0,7 do
+    local ab,bb=a%2,b%2
+    if ab~=bb then r=r+bit end
+    a=(a-ab)/2 b=(b-bb)/2 bit=bit*2
+  end
+  return r
+end
+local function cipher(text,key)
+  if #key==0 then key="0" end
+  local out={}
+  for i=1,#text do
+    local kb=string.byte(key,((i-1)%#key)+1)
+    out[i]=string.char(bxor(string.byte(text,i),kb))
+  end
+  return table.concat(out)
+end
+
+local function randID()
+  local chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+  local s=""
+  for i=1,4 do
+    local n=math.random(1,#chars)
+    s=s..chars:sub(n,n)
+  end
+  return s
+end
+
+local S={id=nil,approvalMode=true,accounts={},pending={},guilds={},logs={},nextGid=1,nextCid=1,tab=1,modemSide=nil}
+
+local function save()
+  local f=fs.open(DATA,"w")
+  if not f then return end
+  f.write(textutils.serialize({
+    id=S.id,approvalMode=S.approvalMode,accounts=S.accounts,
+    guilds=S.guilds,nextGid=S.nextGid,nextCid=S.nextCid,
+  }))
+  f.close()
+end
+local function load()
+  if not fs.exists(DATA) then return end
+  local f=fs.open(DATA,"r")
+  if not f then return end
+  local d=textutils.unserialize(f.readAll())
+  f.close()
+  if type(d)=="table" then for k,v in pairs(d) do S[k]=v end end
+end
+
+local function log(text)
+  table.insert(S.logs,1,{text=text,ts=os.time()})
+  if #S.logs>50 then table.remove(S.logs) end
+end
+
+local function findModem()
+  return peripheral.find("modem",function(_,m) return m.isWireless and m.isWireless() end)
+end
+
+local function ensureNetwork()
+  if rednet.isOpen(S.modemSide) then return true end
+  local m=findModem()
+  if not m then return false end
+  for _,side in ipairs(peripheral.getNames()) do
+    if peripheral.getType(side)=="modem" then
+      local ok=pcall(rednet.open,side)
+      if ok and rednet.isOpen(side) then S.modemSide=side return true end
+    end
+  end
+  return false
+end
+
+local function netStatus()
+  return rednet.isOpen(S.modemSide)
+end
+
+local function findGuildByKey(key)
+  for gid,g in pairs(S.guilds) do
+    if g.key==key then return gid,g end
+  end
+end
+
+local function handleMessage(senderID,msg)
+  if type(msg)~="table" or msg.sid~=S.id then return end
+  if msg.kind=="ping" then
+    rednet.send(senderID,{kind="pong",sid=S.id,approval=S.approvalMode},PROTO)
+    log("Ping from #"..senderID)
+  elseif msg.kind=="register" then
+    if S.accounts[msg.user] then
+      rednet.send(senderID,{kind="register_result",ok=false,reason="Username taken"},PROTO)
+    elseif S.approvalMode then
+      S.pending[msg.user]={pwh=msg.pwh,clientID=senderID}
+      rednet.send(senderID,{kind="register_result",ok=false,pending=true},PROTO)
+      log("Pending account: "..msg.user)
+      save()
+    else
+      S.accounts[msg.user]={pwh=msg.pwh,approved=true}
+      rednet.send(senderID,{kind="register_result",ok=true},PROTO)
+      log("Account created: "..msg.user)
+      save()
+    end
+  elseif msg.kind=="login" then
+    local acc=S.accounts[msg.user]
+    if acc and acc.pwh==msg.pwh and acc.approved then
+      rednet.send(senderID,{kind="login_result",ok=true},PROTO)
+      log("Login: "..msg.user)
+    else
+      rednet.send(senderID,{kind="login_result",ok=false,reason="Invalid credentials"},PROTO)
+    end
+  elseif msg.kind=="list_my_guilds" then
+    local list={}
+    for gid,g in pairs(S.guilds) do
+      if g.members[msg.user] then
+        local chans={}
+        for cid,c in pairs(g.channels) do table.insert(chans,{cid=cid,name=c.name}) end
+        table.insert(list,{gid=gid,name=g.name,channels=chans})
+      end
+    end
+    rednet.send(senderID,{kind="my_guilds",guilds=list},PROTO)
+  elseif msg.kind=="join_guild" then
+    local gid,g=findGuildByKey(msg.key)
+    if not g then
+      rednet.send(senderID,{kind="join_result",ok=false,reason="Invalid key"},PROTO)
+    else
+      g.members[msg.user]=true
+      local chans={}
+      for cid,c in pairs(g.channels) do table.insert(chans,{cid=cid,name=c.name}) end
+      rednet.send(senderID,{kind="join_result",ok=true,guild={gid=gid,name=g.name,channels=chans}},PROTO)
+      log(msg.user.." joined "..g.name)
+      save()
+    end
+  elseif msg.kind=="get_history" then
+    local g=S.guilds[msg.gid]
+    local msgs={}
+    if g and g.channels[msg.cid] then
+      msgs=g.channels[msg.cid].messages or {}
+    end
+    rednet.send(senderID,{kind="history",gid=msg.gid,cid=msg.cid,messages=msgs},PROTO)
+  elseif msg.kind=="send_msg" then
+    local g=S.guilds[msg.gid]
+    if g and g.channels[msg.cid] and g.members[msg.user] then
+      local c=g.channels[msg.cid]
+      c.messages=c.messages or {}
+      table.insert(c.messages,{user=msg.user,text=msg.text,ts=msg.ts})
+      if #c.messages>50 then table.remove(c.messages,1) end
+      rednet.broadcast({kind="msg_broadcast",sid=S.id,gid=msg.gid,cid=msg.cid,user=msg.user,text=msg.text,ts=msg.ts},PROTO)
+      log(msg.user.." -> "..g.name.."/"..c.name)
+      save()
+    end
+  end
+end
+
+local function pset(x,y,c) if x>=1 and x<=W and y>=1 and y<=H then paintutils.drawPixel(x,y,c) end end
+local function hline(x1,x2,y,c) if y>=1 and y<=H then paintutils.drawLine(math.max(1,x1),y,math.min(W,x2),y,c) end end
+local function box(x1,y1,x2,y2,c)
+  x1=math.max(1,x1) y1=math.max(1,y1) x2=math.min(W,x2) y2=math.min(H,y2)
+  if x2>=x1 and y2>=y1 then paintutils.drawFilledBox(x1,y1,x2,y2,c) end
+end
+local function wp(x,y,s,fg,bg)
+  if y<1 or y>H then return end
+  if x<1 then s=s:sub(2-x) x=1 end
+  if x+#s-1>W then s=s:sub(1,W-x+1) end
+  if #s==0 then return end
+  term.setCursorPos(x,y) term.setTextColor(fg) term.setBackgroundColor(bg) term.write(s)
+end
+
+local hit={}
+local focus=nil
+local inputs={newGuild="",joinKeyView=false,newChannel={},selGuild=nil}
+
+local function drawStart()
+  W,H=term.getSize()
+  box(1,1,W,H,colors.white)
+  wp(2,2,"SaveChat Server",colors.black,colors.white)
+  wp(2,4,"No server running.",colors.gray,colors.white)
+  box(2,6,16,6,colors.blue)
+  wp(3,6,"Start Server",colors.white,colors.blue)
+  hit.start={2,16,6,6}
+end
+
+local function drawTabs(y)
+  local tabs={"Guilds","Pending","Settings","Logs"}
+  hit.tabs={}
+  for i,name in ipairs(tabs) do
+    local tx=1+(i-1)*10
+    box(tx,y,tx+9,y,S.tab==i and colors.blue or colors.lightGray)
+    wp(tx+1,y,name,colors.white,S.tab==i and colors.blue or colors.lightGray)
+    table.insert(hit.tabs,{tx,tx+9,y,i})
+  end
+end
+
+local function drawHeader()
+  box(1,1,W,1,colors.gray)
+  wp(2,1,"SaveChat",colors.white,colors.gray)
+  local net=netStatus()
+  wp(W-13,1,net and "Online" or "No Network",net and colors.lime or colors.red,colors.gray)
+  wp(W-4,1,"ID:"..(S.id or "?"),colors.yellow,colors.gray)
+end
+
+local function drawGuilds()
+  local y=4
+  wp(2,3,"Guilds",colors.black,colors.white)
+  hit.guildRows={}
+  for gid,g in pairs(S.guilds) do
+    box(2,y,W-1,y+1,colors.lightGray)
+    wp(3,y,g.name,colors.black,colors.lightGray)
+    wp(3,y+1,"Key: "..g.key,colors.gray,colors.lightGray)
+    table.insert(hit.guildRows,{2,W-1,y,y+1,gid})
+    y=y+3
+  end
+  box(2,H-3,2+#"New Guild"+2,H-3,colors.green)
+  wp(3,H-3,"New Guild",colors.white,colors.green)
+  hit.newGuildBtn={2,2+#"New Guild"+2,H-3,H-3}
+  box(2,H-1,W-1,H-1,colors.lightGray)
+  wp(3,H-1,inputs.newGuild,colors.black,colors.lightGray)
+  hit.newGuildInput={2,W-1,H-1,H-1}
+end
+
+local function drawGuildDetail(gid)
+  local g=S.guilds[gid]
+  if not g then S.tab=1 return end
+  wp(2,3,g.name.." (key: "..g.key..")",colors.black,colors.white)
+  wp(2,4,"< Back",colors.blue,colors.white)
+  hit.backBtn={2,8,4,4}
+  local y=6
+  hit.chanRows={}
+  for cid,c in pairs(g.channels) do
+    box(2,y,W-1,y,colors.lightGray)
+    wp(3,y,"# "..c.name,colors.black,colors.lightGray)
+    table.insert(hit.chanRows,{2,W-1,y,cid})
+    y=y+2
+  end
+  box(2,H-1,W-1,H-1,colors.lightGray)
+  wp(3,H-1,"+ "..(inputs.newChannel[gid] or ""),colors.black,colors.lightGray)
+  hit.newChanInput={2,W-1,H-1,H-1,gid}
+end
+
+local function drawPending()
+  wp(2,3,"Pending accounts",colors.black,colors.white)
+  local y=5
+  hit.pendRows={}
+  for user,p in pairs(S.pending) do
+    box(2,y,W-1,y,colors.lightGray)
+    wp(3,y,user,colors.black,colors.lightGray)
+    wp(W-14,y,"Approve",colors.green,colors.lightGray)
+    wp(W-6,y,"Deny",colors.red,colors.lightGray)
+    table.insert(hit.pendRows,{y=y,user=user})
+    y=y+2
+  end
+  if y==5 then wp(2,5,"No pending requests.",colors.gray,colors.white) end
+end
+
+local function drawSettings()
+  wp(2,3,"Approval mode",colors.black,colors.white)
+  box(2,4,18,4,S.approvalMode and colors.blue or colors.lightGray)
+  wp(3,4,S.approvalMode and "ON (manual)" or "OFF (open)",colors.white,S.approvalMode and colors.blue or colors.gray)
+  hit.approvalBtn={2,18,4,4}
+  wp(2,7,"Modem side: "..(S.modemSide or "none"),colors.gray,colors.white)
+end
+
+local function drawLogs()
+  wp(2,3,"Server logs",colors.black,colors.white)
+  local y=5
+  for _,l in ipairs(S.logs) do
+    if y>=H-1 then break end
+    wp(2,y,l.text:sub(1,W-3),colors.gray,colors.white)
+    y=y+1
+  end
+end
+
+local function render()
+  W,H=term.getSize()
+  box(1,1,W,H,colors.white)
+  drawHeader()
+  drawTabs(2)
+  if S.tab==1 then
+    if inputs.selGuild then drawGuildDetail(inputs.selGuild) else drawGuilds() end
+  elseif S.tab==2 then drawPending()
+  elseif S.tab==3 then drawSettings()
+  elseif S.tab==4 then drawLogs()
+  end
+end
+
+local function pointIn(b,x,y)
+  return b and x>=b[1] and x<=b[2] and y>=b[3] and y<=b[4]
+end
+
+local function handleClick(x,y)
+  if not S.id then
+    if pointIn(hit.start,x,y) then
+      S.id=randID()
+      ensureNetwork()
+      log("Server started: "..S.id)
+      save()
+    end
+    return
+  end
+  for _,t in ipairs(hit.tabs or {}) do
+    if x>=t[1] and x<=t[2] and y==t[3] then S.tab=t[4] inputs.selGuild=nil return end
+  end
+  if S.tab==1 then
+    if inputs.selGuild then
+      if pointIn(hit.backBtn,x,y) then inputs.selGuild=nil return end
+      for _,r in ipairs(hit.chanRows or {}) do
+        if x>=r[1] and x<=r[2] and y==r[3] then return end
+      end
+      if hit.newChanInput and y==hit.newChanInput[3] then focus="newChannel" return end
+    else
+      for _,r in ipairs(hit.guildRows or {}) do
+        if x>=r[1] and x<=r[2] and y>=r[3] and y<=r[4] then inputs.selGuild=r[5] return end
+      end
+      if pointIn(hit.newGuildBtn,x,y) then
+        if #inputs.newGuild>0 then
+          local gid=S.nextGid S.nextGid=S.nextGid+1
+          local chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+          local key=""
+          for i=1,6 do key=key..chars:sub(math.random(1,#chars),math.random(1,#chars)) end
+          S.guilds[gid]={name=inputs.newGuild,key=key,channels={},members={}}
+          inputs.newGuild=""
+          save()
+        end
+        return
+      end
+      if hit.newGuildInput and y==hit.newGuildInput[3] then focus="newGuild" return end
+    end
+  elseif S.tab==2 then
+    for _,r in ipairs(hit.pendRows or {}) do
+      if y==r.y then
+        if x>=W-14 and x<=W-8 then
+          local p=S.pending[r.user]
+          S.accounts[r.user]={pwh=p.pwh,approved=true}
+          S.pending[r.user]=nil
+          if p.clientID then pcall(rednet.send,p.clientID,{kind="account_approved",sid=S.id},PROTO) end
+          log("Approved: "..r.user)
+          save()
+        elseif x>=W-6 and x<=W-2 then
+          S.pending[r.user]=nil
+          log("Denied: "..r.user)
+          save()
+        end
+        return
+      end
+    end
+  elseif S.tab==3 then
+    if pointIn(hit.approvalBtn,x,y) then S.approvalMode=not S.approvalMode save() return end
+  end
+end
+
+load()
+if S.id then ensureNetwork() log("Server resumed: "..S.id) end
+
+local netCheckTimer=os.startTimer(1)
+
+if not S.id then drawStart() else render() end
+
+while true do
+  local ev={os.pullEvent()}
+  local e=ev[1]
+  if e=="timer" and ev[2]==netCheckTimer then
+    netCheckTimer=os.startTimer(1)
+    if S.id then ensureNetwork() render() end
+  elseif e=="peripheral" then
+    if S.id then ensureNetwork() render() end
+  elseif e=="rednet_message" then
+    local senderID,msg=ev[2],ev[3]
+    handleMessage(senderID,msg)
+    if S.id then render() end
+  elseif e=="mouse_click" then
+    local x,y=ev[3],ev[4]
+    focus=nil
+    handleClick(x,y)
+    if S.id then render() end
+  elseif e=="char" then
+    if focus=="newGuild" then inputs.newGuild=inputs.newGuild..ev[2]
+    elseif focus=="newChannel" and inputs.selGuild then
+      inputs.newChannel[inputs.selGuild]=(inputs.newChannel[inputs.selGuild] or "")..ev[2]
+    end
+    if S.id then render() end
+  elseif e=="key" then
+    if ev[2]==keys.backspace then
+      if focus=="newGuild" then inputs.newGuild=inputs.newGuild:sub(1,-2)
+      elseif focus=="newChannel" and inputs.selGuild then
+        local cur=inputs.newChannel[inputs.selGuild] or ""
+        inputs.newChannel[inputs.selGuild]=cur:sub(1,-2)
+      end
+    elseif ev[2]==keys.enter then
+      if focus=="newChannel" and inputs.selGuild then
+        local name=inputs.newChannel[inputs.selGuild]
+        if name and #name>0 then
+          local g=S.guilds[inputs.selGuild]
+          local cid=S.nextCid S.nextCid=S.nextCid+1
+          g.channels[cid]={name=name,messages={}}
+          inputs.newChannel[inputs.selGuild]=""
+          save()
+        end
+      end
+    end
+    if S.id then render() end
+  end
+end
+
+]==]
+
+local EAVECHAT_SRC=[==[
+local PROTO="WAVEOS_CHAT"
+local DATA="/.eavechat_data"
+local W,H=term.getSize()
+
+local function bxor(a,b)
+  local r,bit=0,1
+  for i=0,7 do
+    local ab,bb=a%2,b%2
+    if ab~=bb then r=r+bit end
+    a=(a-ab)/2 b=(b-bb)/2 bit=bit*2
+  end
+  return r
+end
+local function cipher(text,key)
+  if #key==0 then key="0" end
+  local out={}
+  for i=1,#text do
+    local kb=string.byte(key,((i-1)%#key)+1)
+    out[i]=string.char(bxor(string.byte(text,i),kb))
+  end
+  return table.concat(out)
+end
+local function hashpw(p)
+  local h=5381
+  for i=1,#p do h=((h*33)+string.byte(p,i))%16777216 end
+  return string.format("%06x",h)
+end
+
+local S={sid=nil,serverComputerID=nil,user=nil,pwh=nil,loggedIn=false,
+  guilds={},activeGuild=nil,activeChannel=nil,messages={},
+  screen="link",linkInput="",authMode="login",authUser="",authPw="",authStatus=nil,
+  joinKeyInput="",draftMsg="",scroll=0}
+
+local function save()
+  local f=fs.open(DATA,"w")
+  if not f then return end
+  f.write(textutils.serialize({sid=S.sid,serverComputerID=S.serverComputerID,user=S.user,pwh=S.pwh}))
+  f.close()
+end
+local function load()
+  if not fs.exists(DATA) then return end
+  local f=fs.open(DATA,"r")
+  if not f then return end
+  local d=textutils.unserialize(f.readAll())
+  f.close()
+  if type(d)=="table" then for k,v in pairs(d) do S[k]=v end end
+end
+
+local function findModem()
+  return peripheral.find("modem",function(_,m) return m.isWireless and m.isWireless() end)
+end
+local modemSide=nil
+local function ensureNetwork()
+  if modemSide and rednet.isOpen(modemSide) then return true end
+  local m=findModem()
+  if not m then return false end
+  for _,side in ipairs(peripheral.getNames()) do
+    if peripheral.getType(side)=="modem" then
+      local ok=pcall(rednet.open,side)
+      if ok and rednet.isOpen(side) then modemSide=side return true end
+    end
+  end
+  return false
+end
+local function netStatus() return modemSide~=nil and rednet.isOpen(modemSide) end
+
+local function pset(x,y,c) if x>=1 and x<=W and y>=1 and y<=H then paintutils.drawPixel(x,y,c) end end
+local function hline(x1,x2,y,c) if y>=1 and y<=H then paintutils.drawLine(math.max(1,x1),y,math.min(W,x2),y,c) end end
+local function box(x1,y1,x2,y2,c)
+  x1=math.max(1,x1) y1=math.max(1,y1) x2=math.min(W,x2) y2=math.min(H,y2)
+  if x2>=x1 and y2>=y1 then paintutils.drawFilledBox(x1,y1,x2,y2,c) end
+end
+local function wp(x,y,s,fg,bg)
+  if y<1 or y>H then return end
+  if x<1 then s=s:sub(2-x) x=1 end
+  if x+#s-1>W then s=s:sub(1,W-x+1) end
+  if #s==0 then return end
+  term.setCursorPos(x,y) term.setTextColor(fg) term.setBackgroundColor(bg) term.write(s)
+end
+
+local DARK1=colors.gray
+local DARK2=colors.black
+local ACCENT=colors.purple
+local hit={}
+
+local function curGuild() return S.guilds[S.activeGuild] end
+local function curChannel()
+  local g=curGuild()
+  if not g then return nil end
+  for _,c in ipairs(g.channels) do if c.cid==S.activeChannel then return c end end
+end
+
+local function drawLink()
+  W,H=term.getSize()
+  box(1,1,W,H,DARK2)
+  wp(2,2,"EaveChat",colors.white,DARK2)
+  wp(2,4,netStatus() and "Online" or "No Network",netStatus() and colors.lime or colors.red,DARK2)
+  wp(2,6,"Enter SaveChat server ID:",colors.lightGray,DARK2)
+  box(2,7,12,7,colors.white)
+  wp(3,7,S.linkInput,colors.black,colors.white)
+  hit.linkInput={2,12,7,7}
+  box(2,9,9,9,ACCENT)
+  wp(3,9,"Connect",colors.white,ACCENT)
+  hit.connectBtn={2,9,9,9}
+  if S.authStatus then wp(2,11,S.authStatus,colors.orange,DARK2) end
+end
+
+local function drawAuth()
+  W,H=term.getSize()
+  box(1,1,W,H,DARK2)
+  wp(2,2,"EaveChat - "..S.sid,colors.white,DARK2)
+  wp(2,4,netStatus() and "Online" or "No Network",netStatus() and colors.lime or colors.red,DARK2)
+  box(2,6,11,6,S.authMode=="login" and ACCENT or DARK1)
+  wp(3,6,"Login",colors.white,S.authMode=="login" and ACCENT or DARK1)
+  box(12,6,22,6,S.authMode=="register" and ACCENT or DARK1)
+  wp(13,6,"Register",colors.white,S.authMode=="register" and ACCENT or DARK1)
+  hit.loginTab={2,11,6,6} hit.registerTab={12,22,6,6}
+  wp(2,8,"Username",colors.lightGray,DARK2)
+  box(2,9,18,9,colors.white)
+  wp(3,9,S.authUser,colors.black,colors.white)
+  hit.userInput={2,18,9,9}
+  wp(2,11,"Password",colors.lightGray,DARK2)
+  box(2,12,18,12,colors.white)
+  wp(3,12,string.rep("*",#S.authPw),colors.black,colors.white)
+  hit.pwInput={2,18,12,12}
+  box(2,14,9,14,colors.green)
+  wp(3,14,S.authMode=="login" and "Sign in" or "Create",colors.white,colors.green)
+  hit.authBtn={2,9,14,14}
+  if S.authStatus then wp(2,16,S.authStatus,colors.orange,DARK2) end
+end
+
+local function drawMain()
+  W,H=term.getSize()
+  box(1,1,W,H,DARK2)
+  local railW=3
+  box(1,1,railW,H,colors.black)
+  local y=2
+  hit.guildIcons={}
+  for gid,g in pairs(S.guilds) do
+    local bg=(gid==S.activeGuild) and ACCENT or DARK1
+    box(1,y,railW,y+1,bg)
+    wp(1,y,g.name:sub(1,1),colors.white,bg)
+    table.insert(hit.guildIcons,{1,railW,y,y+1,gid})
+    y=y+3
+  end
+  box(1,H-2,railW,H-1,colors.green)
+  wp(1,H-2,"+",colors.white,colors.green)
+  hit.joinBtn={1,railW,H-2,H-1}
+
+  local listW=10
+  box(railW+1,1,railW+listW,H,DARK1)
+  local g=curGuild()
+  hit.chanRows={}
+  if g then
+    wp(railW+2,1,g.name:sub(1,listW-2),colors.white,DARK1)
+    local cy=3
+    for _,c in ipairs(g.channels) do
+      local bg=(c.cid==S.activeChannel) and colors.gray or DARK1
+      box(railW+1,cy,railW+listW,cy,bg)
+      wp(railW+2,cy,"#"..c.name:sub(1,listW-3),colors.lightGray,bg)
+      table.insert(hit.chanRows,{railW+1,railW+listW,cy,c.cid})
+      cy=cy+1
+    end
+  else
+    wp(railW+2,2,"No server",colors.lightGray,DARK1)
+    wp(railW+2,3,"selected",colors.lightGray,DARK1)
+  end
+
+  local chatX=railW+listW+1
+  box(chatX,1,W,1,colors.gray)
+  local c=curChannel()
+  wp(chatX+1,1,c and ("#"..c.name) or "Select a channel",colors.white,colors.gray)
+  wp(W-12,1,netStatus() and "Online" or "No Network",netStatus() and colors.lime or colors.red,colors.gray)
+
+  box(chatX,2,W,H-2,DARK2)
+  if c then
+    local msgs=S.messages[S.activeGuild.."_"..S.activeChannel] or {}
+    local y2=H-3
+    for i=#msgs,1,-1 do
+      if y2<2 then break end
+      local m=msgs[i]
+      wp(chatX+1,y2,(m.user or "?")..": "..(m.text or ""):sub(1,W-chatX-#( m.user or "?")-3),
+         m.user==S.user and colors.lightBlue or colors.white,DARK2)
+      y2=y2-1
+    end
+  end
+
+  box(chatX,H-1,W,H-1,colors.gray)
+  wp(chatX+1,H-1,"> "..S.draftMsg,colors.white,colors.gray)
+  hit.msgInput={chatX,W,H-1,H-1}
+end
+
+local function drawJoinDialog()
+  W,H=term.getSize()
+  local dw=24 local dh=7
+  local dx=math.floor((W-dw)/2) local dy=math.floor((H-dh)/2)
+  box(dx,dy,dx+dw-1,dy+dh-1,DARK1)
+  wp(dx+1,dy,"Join Server",colors.white,DARK1)
+  wp(dx+1,dy+2,"Enter invite key:",colors.lightGray,DARK1)
+  box(dx+1,dy+3,dx+dw-2,dy+3,colors.white)
+  wp(dx+2,dy+3,S.joinKeyInput,colors.black,colors.white)
+  hit.joinKeyInput={dx+1,dx+dw-2,dy+3,dy+3}
+  box(dx+1,dy+5,dx+9,dy+5,colors.green)
+  wp(dx+2,dy+5,"Join",colors.white,colors.green)
+  hit.joinConfirm={dx+1,dx+9,dy+5,dy+5}
+  box(dx+11,dy+5,dx+dw-2,dy+5,colors.red)
+  wp(dx+12,dy+5,"Cancel",colors.white,colors.red)
+  hit.joinCancel={dx+11,dx+dw-2,dy+5,dy+5}
+end
+
+local function render()
+  if S.screen=="link" then drawLink()
+  elseif S.screen=="auth" then drawAuth()
+  elseif S.screen=="main" then drawMain()
+  elseif S.screen=="join" then drawMain() drawJoinDialog()
+  end
+end
+
+local function pointIn(b,x,y) return b and x>=b[1] and x<=b[2] and y>=b[3] and y<=b[4] end
+
+local focus=nil
+local pendingRequest=nil
+
+local function sendToServer(msg)
+  if not S.serverComputerID then
+    rednet.broadcast(msg,PROTO)
+  else
+    rednet.send(S.serverComputerID,msg,PROTO)
+  end
+end
+
+local function refreshGuilds()
+  pendingRequest="my_guilds"
+  sendToServer({kind="list_my_guilds",sid=S.sid,user=S.user})
+end
+
+local function handleClick(x,y)
+  focus=nil
+  if S.screen=="link" then
+    if pointIn(hit.linkInput,x,y) then focus="link" return end
+    if pointIn(hit.connectBtn,x,y) then
+      if #S.linkInput==4 then
+        if not ensureNetwork() then S.authStatus="No network available" return end
+        S.sid=S.linkInput:upper()
+        S.authStatus="Searching..."
+        pendingRequest="ping"
+        rednet.broadcast({kind="ping",sid=S.sid},PROTO)
+      else
+        S.authStatus="ID must be 4 characters"
+      end
+    end
+    return
+  elseif S.screen=="auth" then
+    if pointIn(hit.loginTab,x,y) then S.authMode="login" return end
+    if pointIn(hit.registerTab,x,y) then S.authMode="register" return end
+    if pointIn(hit.userInput,x,y) then focus="user" return end
+    if pointIn(hit.pwInput,x,y) then focus="pw" return end
+    if pointIn(hit.authBtn,x,y) then
+      if #S.authUser<1 or #S.authPw<1 then S.authStatus="Fill in all fields" return end
+      if not ensureNetwork() then S.authStatus="No network available" return end
+      local pwh=hashpw(S.authPw)
+      if S.authMode=="login" then
+        pendingRequest="login"
+        sendToServer({kind="login",sid=S.sid,user=S.authUser,pwh=pwh})
+        S.authStatus="Signing in..."
+      else
+        pendingRequest="register"
+        sendToServer({kind="register",sid=S.sid,user=S.authUser,pwh=pwh})
+        S.authStatus="Creating account..."
+      end
+    end
+    return
+  elseif S.screen=="main" then
+    for _,gi in ipairs(hit.guildIcons or {}) do
+      if x>=gi[1] and x<=gi[2] and y>=gi[3] and y<=gi[4] then
+        S.activeGuild=gi[5] S.activeChannel=nil return
+      end
+    end
+    if pointIn(hit.joinBtn,x,y) then S.screen="join" S.joinKeyInput="" return end
+    for _,cr in ipairs(hit.chanRows or {}) do
+      if x>=cr[1] and x<=cr[2] and y==cr[3] then
+        S.activeChannel=cr[4]
+        pendingRequest="history"
+        sendToServer({kind="get_history",sid=S.sid,gid=S.activeGuild,cid=S.activeChannel})
+        return
+      end
+    end
+    if pointIn(hit.msgInput,x,y) then focus="msg" return end
+  elseif S.screen=="join" then
+    if pointIn(hit.joinKeyInput,x,y) then focus="joinkey" return end
+    if pointIn(hit.joinConfirm,x,y) then
+      if #S.joinKeyInput>0 then
+        pendingRequest="join"
+        sendToServer({kind="join_guild",sid=S.sid,user=S.user,key=S.joinKeyInput})
+      end
+      return
+    end
+    if pointIn(hit.joinCancel,x,y) then S.screen="main" return end
+  end
+end
+
+local function handleServerMsg(senderID,msg)
+  if type(msg)~="table" then return end
+  if msg.kind=="pong" and msg.sid==S.sid then
+    S.serverComputerID=senderID
+    S.authStatus=nil
+    save()
+    S.screen="auth"
+  elseif msg.kind=="register_result" then
+    if msg.ok then S.authStatus="Account created. You can sign in." S.authMode="login"
+    elseif msg.pending then S.authStatus="Awaiting admin approval."
+    else S.authStatus=msg.reason or "Registration failed" end
+  elseif msg.kind=="login_result" then
+    if msg.ok then
+      S.user=S.authUser S.pwh=hashpw(S.authPw) S.loggedIn=true
+      save()
+      S.screen="main"
+      refreshGuilds()
+    else
+      S.authStatus=msg.reason or "Login failed"
+    end
+  elseif msg.kind=="account_approved" and msg.sid==S.sid then
+    S.authStatus="Account approved! You can sign in now."
+  elseif msg.kind=="my_guilds" then
+    S.guilds={}
+    for _,g in ipairs(msg.guilds) do S.guilds[g.gid]={name=g.name,channels=g.channels} end
+  elseif msg.kind=="join_result" then
+    if msg.ok then
+      S.guilds[msg.guild.gid]={name=msg.guild.name,channels=msg.guild.channels}
+      S.activeGuild=msg.guild.gid
+      S.screen="main"
+    else
+      S.authStatus=msg.reason
+    end
+  elseif msg.kind=="history" then
+    local key=msg.gid.."_"..msg.cid
+    local list={}
+    for _,m in ipairs(msg.messages) do
+      table.insert(list,{user=m.user,text=cipher(m.text,S.sid),ts=m.ts})
+    end
+    S.messages[key]=list
+  elseif msg.kind=="msg_broadcast" and msg.sid==S.sid then
+    local key=msg.gid.."_"..msg.cid
+    S.messages[key]=S.messages[key] or {}
+    table.insert(S.messages[key],{user=msg.user,text=cipher(msg.text,S.sid),ts=msg.ts})
+  end
+end
+
+load()
+if S.sid and S.user then
+  ensureNetwork()
+  S.screen="auth"
+  S.authStatus="Reconnecting..."
+  pendingRequest="ping"
+  rednet.broadcast({kind="ping",sid=S.sid},PROTO)
+elseif S.sid then
+  S.screen="auth"
+end
+
+render()
+local netTimer=os.startTimer(1)
+
+while true do
+  local ev={os.pullEvent()}
+  local e=ev[1]
+  if e=="timer" and ev[2]==netTimer then
+    netTimer=os.startTimer(1)
+    render()
+  elseif e=="peripheral" or e=="peripheral_detach" then
+    ensureNetwork() render()
+  elseif e=="rednet_message" then
+    handleServerMsg(ev[2],ev[3])
+    render()
+  elseif e=="mouse_click" then
+    handleClick(ev[3],ev[4])
+    render()
+  elseif e=="char" then
+    local ch=ev[2]
+    if focus=="link" then S.linkInput=(S.linkInput..ch):sub(1,4)
+    elseif focus=="user" then S.authUser=S.authUser..ch
+    elseif focus=="pw" then S.authPw=S.authPw..ch
+    elseif focus=="msg" then S.draftMsg=S.draftMsg..ch
+    elseif focus=="joinkey" then S.joinKeyInput=S.joinKeyInput..ch
+    end
+    render()
+  elseif e=="key" then
+    if ev[2]==keys.backspace then
+      if focus=="link" then S.linkInput=S.linkInput:sub(1,-2)
+      elseif focus=="user" then S.authUser=S.authUser:sub(1,-2)
+      elseif focus=="pw" then S.authPw=S.authPw:sub(1,-2)
+      elseif focus=="msg" then S.draftMsg=S.draftMsg:sub(1,-2)
+      elseif focus=="joinkey" then S.joinKeyInput=S.joinKeyInput:sub(1,-2)
+      end
+    elseif ev[2]==keys.enter then
+      if focus=="msg" and #S.draftMsg>0 and curChannel() then
+        local enc=cipher(S.draftMsg,S.sid)
+        sendToServer({kind="send_msg",sid=S.sid,user=S.user,gid=S.activeGuild,cid=S.activeChannel,text=enc,ts=os.time()})
+        S.draftMsg=""
+      end
+    end
+    render()
+  end
+end
+
+]==]
+
+local function ensureBuiltinAppFiles()
+  local needed={
+    {path="/waveos_savechat.lua",src=SAVECHAT_SRC,label="Installing SaveChat..."},
+    {path="/waveos_eavechat.lua",src=EAVECHAT_SRC,label="Installing EaveChat..."},
+  }
+  local missing={}
+  for _,item in ipairs(needed) do
+    if not fs.exists(item.path) then table.insert(missing,item) end
+  end
+  if #missing==0 then return end
+  local steps={"Initializing filesystem..."}
+  for _,item in ipairs(missing) do table.insert(steps,item.label) end
+  table.insert(steps,"Finalizing setup...")
+  local bw=math.floor(W*0.6) local bx=math.floor((W-bw)/2)
+  local cy=math.floor(H/2)
+  for i,label in ipairs(steps) do
+    withBuffer(function()
+      box(1,1,W,H,colors.black)
+      wp(math.floor((W-#label)/2),cy-2,label,colors.white,colors.black)
+      box(bx,cy,bx+bw-1,cy,colors.gray)
+      local fillW=math.floor(bw*i/#steps)
+      if fillW>0 then box(bx,cy,bx+fillW-1,cy,colors.lightBlue) end
+    end)
+    if i==1 then
+      sleep(0.2)
+    else
+      local item=missing[i-1]
+      if item then
+        local f=fs.open(item.path,"w")
+        if f then f.write(item.src) f.close() end
+      end
+      sleep(0.2)
+    end
+  end
+end
 local function registerBuiltins()
   if #S.apps>0 then return end
   table.insert(S.apps,{name="Explorer",file="",icon="\186",builtin=true,protected=true})
