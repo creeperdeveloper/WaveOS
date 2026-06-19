@@ -5,9 +5,10 @@ local SCREEN_BUF=window.create(NATIVE_TERM,1,1,W,H,false)
 local function withBuffer(drawFn)
   SCREEN_BUF.setVisible(false)
   local prev=term.redirect(SCREEN_BUF)
-  drawFn()
+  local ok,err=pcall(drawFn)
   term.redirect(prev)
   SCREEN_BUF.setVisible(true)
+  if not ok then error(err,0) end
 end
 local S={
   screen="boot",accounts={},user="",pw="",theme=colors.blue,bg=1,
@@ -165,6 +166,9 @@ local function drawBackground()
   end
 end
 
+local TASKBAR_H=3
+local function taskbarY() return H-TASKBAR_H+1 end
+
 local function drawDesktopIcons()
   local cellW,cellH=7,4
   local startX,startY=2,3
@@ -183,9 +187,6 @@ local function drawDesktopIcons()
     end
   end
 end
-
-local TASKBAR_H=3
-local function taskbarY() return H-TASKBAR_H+1 end
 
 local function drawMenuIcon(x,y)
   for i=0,2 do hline(x,x+4,y+i,colors.white) end
@@ -413,29 +414,48 @@ local function drawSpinnerFrame(cx,cy,frame)
   end
 end
 
-local function drawBigW(cx,cy)
-  local pts={{0,0},{4,8},{7,2},{10,8},{14,0}}
-  local ox,oy=cx-7,cy-4
-  for i=1,#pts-1 do
-    local x1,y1=ox+pts[i][1],oy+pts[i][2]
-    local x2,y2=ox+pts[i+1][1],oy+pts[i+1][2]
-    paintutils.drawLine(x1,y1,x2,y2,colors.blue)
-    paintutils.drawLine(x1+1,y1,x2+1,y2,colors.blue)
+local function drawBootPixelbox(pbox)
+  local pw,ph=pbox.w,pbox.height
+  local cx,cy=math.floor(pw/2),math.floor(ph/2)
+  local radius=math.floor(math.min(pw,ph)*0.22)
+  local dots=12
+  for frame=0,dots*2 do
+    for y=1,ph do
+      local row=pbox.canvas[y]
+      for x=1,pw do row[x]=colors.black end
+    end
+    for i=0,dots-1 do
+      local a=(i/dots)*2*math.pi
+      local px=math.floor(cx+math.cos(a)*radius+0.5)
+      local py=math.floor(cy+math.sin(a)*radius+0.5)
+      local dist=(i-frame)%dots
+      local c=colors.gray
+      if dist<=1 then c=colors.white
+      elseif dist<=4 then c=colors.lightBlue
+      elseif dist<=7 then c=colors.blue
+      end
+      if px>=1 and px<=pw and py>=1 and py<=ph then
+        pbox.canvas[py][px]=c
+        if px+1<=pw then pbox.canvas[py][px+1]=c end
+      end
+    end
+    local ok=pcall(function() pbox:render() end)
+    if not ok then return false end
+    sleep(0.04)
   end
+  return true
 end
 
-local function drawBoot()
-  local cx,cy=math.floor(W/2),math.floor(H/2)-3
-  local scy=cy+7
-  withBuffer(function()
-    box(1,1,W,H,colors.black)
-    drawBigW(cx,cy)
-  end)
-  sleep(0.3)
-  for frame=0,11 do
+local function drawBoot(pbox)
+  if pbox then
+    local ok=pcall(drawBootPixelbox,pbox)
+    if ok then return end
+  end
+  local cx,cy=math.floor(W/2),math.floor(H/2)
+  for frame=0,15 do
     withBuffer(function()
-      box(cx-5,scy-2,cx+5,scy+2,colors.black)
-      drawSpinnerFrame(cx,scy,frame%8)
+      box(cx-5,cy-2,cx+5,cy+2,colors.black)
+      drawSpinnerFrame(cx,cy,frame%8)
     end)
     sleep(0.08)
   end
@@ -951,10 +971,9 @@ local function launchApp(app)
     notify("WaveOS","Close a window first (max "..MAX_WINDOWS..")")
     return
   end
-  if app.name=="Task Manager" then openTaskManager()
+  if app.name=="App Manager" then openAppManager()
   elseif app.name=="Settings" then openSettings()
   elseif app.name=="Explorer" then openFileExplorer()
-  elseif app.name=="Shop" then openShop()
   else runApp(app) end
 end
 
@@ -2090,39 +2109,81 @@ local function ensureBuiltinAppFiles()
   for _,item in ipairs(needed) do
     if not fs.exists(item.path) then table.insert(missing,item) end
   end
-  if #missing==0 then return end
+  local needPixelbox=not fs.exists("/waveos_pixelbox_lite.lua")
+  if #missing==0 and not needPixelbox then return end
   local steps={"Initializing filesystem..."}
   for _,item in ipairs(missing) do table.insert(steps,item.label) end
+  if needPixelbox then table.insert(steps,"Installing graphics library...") end
   table.insert(steps,"Finalizing setup...")
   local bw=math.floor(W*0.6) local bx=math.floor((W-bw)/2)
   local cy=math.floor(H/2)
-  for i,label in ipairs(steps) do
+  local stepIdx=0
+  local function showProgress(label)
+    stepIdx=stepIdx+1
     withBuffer(function()
       box(1,1,W,H,colors.black)
       wp(math.floor((W-#label)/2),cy-2,label,colors.white,colors.black)
       box(bx,cy,bx+bw-1,cy,colors.gray)
-      local fillW=math.floor(bw*i/#steps)
+      local fillW=math.floor(bw*stepIdx/#steps)
       if fillW>0 then box(bx,cy,bx+fillW-1,cy,colors.lightBlue) end
     end)
-    if i==1 then
-      sleep(0.2)
-    else
-      local item=missing[i-1]
-      if item then
-        local f=fs.open(item.path,"w")
-        if f then f.write(item.src) f.close() end
-      end
-      sleep(0.2)
-    end
   end
+  showProgress("Initializing filesystem...")
+  sleep(0.2)
+  for _,item in ipairs(missing) do
+    showProgress(item.label)
+    local f=fs.open(item.path,"w")
+    if f then f.write(item.src) f.close() end
+    sleep(0.15)
+  end
+  if needPixelbox then
+    showProgress("Installing graphics library...")
+    local ok=pcall(function()
+      shell.run("wget","https://raw.githubusercontent.com/9551-Dev/pixelbox_lite/master/pixelbox_lite.lua","/waveos_pixelbox_lite.lua")
+    end)
+    if not ok or not fs.exists("/waveos_pixelbox_lite.lua") then
+      S.pixelboxFailed=true
+    end
+    sleep(0.15)
+  end
+  showProgress("Finalizing setup...")
+  sleep(0.2)
+end
+
+local function loadPixelbox()
+  if not fs.exists("/waveos_pixelbox_lite.lua") then return nil end
+  local ok,mod=pcall(function()
+    local fn=loadfile("/waveos_pixelbox_lite.lua")
+    if not fn then return nil end
+    return fn()
+  end)
+  if ok and type(mod)=="table" and mod.new then return mod end
+  return nil
 end
 local function registerBuiltins()
   if #S.apps>0 then return end
   table.insert(S.apps,{name="Explorer",file="",icon="\186",builtin=true,protected=true})
   table.insert(S.apps,{name="Settings",file="",icon="\159",builtin=true,protected=true})
   table.insert(S.apps,{name="App Manager",file="",icon="\31",builtin=true,protected=true})
-  table.insert(S.apps,{name="EaveChat",file="",icon="\206",builtin=true,protected=true})
-  table.insert(S.apps,{name="SaveChat",file="",icon="\207",builtin=true,protected=true})
+  table.insert(S.apps,{name="EaveChat",file="/waveos_eavechat.lua",icon="\206",builtin=true,protected=true})
+  table.insert(S.apps,{name="SaveChat",file="/waveos_savechat.lua",icon="\207",builtin=true,protected=true})
+end
+
+local function repairBuiltinApps()
+  local fixedPaths={EaveChat="/waveos_eavechat.lua",SaveChat="/waveos_savechat.lua"}
+  local seen={}
+  for _,app in ipairs(S.apps) do
+    seen[app.name]=true
+    if fixedPaths[app.name] and (app.file=="" or app.file==nil) then
+      app.file=fixedPaths[app.name]
+    end
+  end
+  if not seen["EaveChat"] then
+    table.insert(S.apps,{name="EaveChat",file="/waveos_eavechat.lua",icon="\206",builtin=true,protected=true})
+  end
+  if not seen["SaveChat"] then
+    table.insert(S.apps,{name="SaveChat",file="/waveos_savechat.lua",icon="\207",builtin=true,protected=true})
+  end
 end
 
 loadData()
@@ -2131,10 +2192,20 @@ if not S.bg then S.bg=1 end
 if not S.clockfmt then S.clockfmt="24h" end
 if not S.volume then S.volume=70 end
 registerBuiltins()
+repairBuiltinApps()
+ensureBuiltinAppFiles()
+local PBOX=loadPixelbox()
 
 S.tmpUser="" S.tmpPw="" S.tmpPw2="" S.setupFocus="user" S.setupStep=1
 
-drawBoot()
+withBuffer(function() box(1,1,W,H,colors.black) end)
+local pboxInstance=nil
+if PBOX then
+  local ok,inst=pcall(PBOX.new,NATIVE_TERM)
+  if ok then pboxInstance=inst end
+end
+drawBoot(pboxInstance)
+withBuffer(function() box(1,1,W,H,colors.black) end)
 
 if S.setup and next(S.accounts) then
   S.screen="login"
